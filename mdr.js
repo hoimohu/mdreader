@@ -809,10 +809,7 @@ function mdread(md) {
             insert(t.replace(`<code class="${codeobj.class}"></code>`, `<code class="${codeobj.class}">${codeobj.text.replace(/&#92;/g, '\\\\').replace(/&#96;/g, '\\`').replace(/&#42;/g, '\\*').replace(/&#95;/g, '\\_').replace(/&#123;/g, '\\{').replace(/&#125;/g, '\\}').replace(/&#91;/g, '\\[').replace(/&#93;/g, '\\]').replace(/&lt;/g, '\\<').replace(/&gt;/g, '\\>').replace(/&#40;/g, '\\(').replace(/&#41;/g, '\\)').replace(/&#35;/g, '\\#').replace(/&#43;/g, '\\+').replace(/&#45;/g, '\\-').replace(/&#46;/g, '\\.').replace(/&#33;/g, '\\!').replace(/&#124;/g, '\\|').replace(/&equals;/g, '\\=').replace(/&amp;/g, '\\&').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>`), i);
         } else if (0 < result.length && data.listnumber !== -1) {
             if (result[result.length - 1].match(/<li>$/) && t.match(/^\[( |x)\] .+$/)) {
-                result.push(t.replace(/^\[( |x)\]/, ` < input type = "checkbox"
-                    disabled$ {
-                        ((t.match(/(?<=^\[)( |x)(?=\] .+$)/)[0] === 'x') ? ' checked' : '')
-                    } > `));
+                result.push(t.replace(/^\[( |x)\]/, `<input type="checkbox" disabled${((t.match(/(?<=^\[)( |x)(?=\] .+$)/)[0] === 'x') ? ' checked' : '')}>`));
             } else {
                 result.push(t);
             }
@@ -830,9 +827,7 @@ function mdread(md) {
         if (i === 0) {
             result.push('<ol id="footnote">');
         }
-        result.push(` < li id = "${encodeURIComponent(k)}" > $ {
-                        data.footnote[k].text.replace(/\n/g, '<br>')
-                    } < /li>`);
+        result.push(`<li id="${encodeURIComponent(k)}">${data.footnote[k].text.replace(/\n/g, '<br>')}</li>`);
                     if (i === Object.keys(data.footnote).length - 1) {
                         result.push('</ol>');
                     }
@@ -853,4 +848,4 @@ function mdread(md) {
                 }
 
                 return result.join('\n');
-            }
+}
