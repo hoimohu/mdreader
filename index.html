@@ -5,17 +5,42 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>mdr.js</title>
+    <style>
+        #input,
+        #output {
+            width: 48%;
+            height: 480px;
+        }
+
+        #output {
+            border: 1px black solid;
+            word-break: break-all;
+            overflow-y: scroll;
+        }
+
+        #viewpre {
+            width: 100%;
+            height: 300px;
+            margin: 10px auto;
+            border: 1px black solid;
+            overflow: scroll;
+        }
+
+        .flex {
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
 </head>
 
 <body>
-    <div style="display: flex;justify-content: space-between;">
-        <textarea id="input" style="width: 48%;height: 500px;"></textarea>
-        <div id="output"
-            style="width: 48%;height: 500px;border: 1px black solid;word-break: break-all;overflow-y: scroll;"></div>
+    <div class="flex">
+        <textarea id="input" title="input"></textarea>
+        <div id="output"></div>
     </div>
-    <pre style="width: 100%;height: 300px;margin:10px auto;border: 1px black solid;overflow: scroll;"><code id="viewcode"></code>
-    </pre>
+    <pre id="viewpre"><code id="viewcode"></code></pre>
     <script src="mdr.js"></script>
+    <script src="format.js"></script>
     <script src="script.js"></script>
 </body>
 
