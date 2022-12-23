@@ -10,7 +10,7 @@
         #input,
         #output {
             width: 48%;
-            height: 480px;
+            height: 50vh;
         }
 
         #output {
@@ -21,7 +21,7 @@
 
         #viewpre {
             width: 100%;
-            height: 300px;
+            height: 40vh;
             margin: 10px auto;
             border: 1px black solid;
             overflow: scroll;
@@ -39,6 +39,11 @@
         <textarea id="input" title="input"></textarea>
         <div id="output"></div>
     </div>
+    <select id="output_option" title="出力設定">
+        <option value="none">そのまま出力</option>
+        <option value="br">改行多め</option>
+        <option value="fewbr">改行少なめ</option>
+    </select>
     <pre id="viewpre"><code id="viewcode"></code></pre>
     <script src="mdr.js"></script>
     <script src="format.js"></script>
