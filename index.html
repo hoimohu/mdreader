@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="robots" content="noindex,nofollow">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mdr.js</title>
+    <title>mdreader</title>
     <style>
         #input,
         #output {
@@ -39,11 +39,14 @@
         <textarea id="input" title="input"></textarea>
         <div id="output"></div>
     </div>
-    <select id="output_option" title="出力設定">
-        <option value="none">そのまま出力</option>
-        <option value="br">改行多め</option>
-        <option value="fewbr">改行少なめ</option>
-    </select>
+    <div class="flex">
+        <select id="output_option" title="出力設定">
+            <option value="none">そのまま出力</option>
+            <option value="indent" selected>インデント入り</option>
+            <option value="fewbr">改行少なめ</option>
+        </select>
+        <button type="button" id="popup">ポップアップ</button>
+    </div>
     <pre id="viewpre"><code id="viewcode"></code></pre>
     <script src="mdr.js"></script>
     <script src="format.js"></script>

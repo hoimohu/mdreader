@@ -9,15 +9,22 @@
     const output = document.getElementById('output');
     const viewcode = document.getElementById('viewcode');
     const output_option = document.getElementById('output_option');
-    let option = 'none';
-    output_option.addEventListener('change', () => {
-        option = output_option.value;
+    output_option.onchange = convert;
+    const popupBtn = document.getElementById('popup');
+    let previewWindows = [];
+    popupBtn.onclick = () => {
+        const w = window.open();
+        w.document.title = 'mdreaderプレビュー';
+        w.onclose = () => {
+            previewWindows = previewWindows.filter(e => e !== w);
+        };
+        previewWindows.push(w);
         convert();
-    });
+    };
     function convert() {
         const code = mdread(input.value);
-        switch (option) {
-            case 'br':
+        switch (output_option.value) {
+            case 'indent':
                 output.innerHTML = format(code);
                 viewcode.innerText = format(code);
                 break;
@@ -31,6 +38,11 @@
                 viewcode.innerText = code;
                 break;
         }
+        if (previewWindows.length > 0) {
+            previewWindows.forEach(e => {
+                e.document.body.innerHTML = code;
+            });
+        }
     }
-    input.addEventListener('input', convert);
+    input.oninput = convert;
 })();
