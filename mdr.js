@@ -321,7 +321,7 @@ function mdread(markdown) {
                             } else if (index2 !== 1) {
                                 if (index3 === 0) {
                                     output += '<tr>';
-                                } else if (index3 !== tableRow[index2].split('|') - 1) {
+                                } else if (index3 !== tableRow[index2].split('|').length - 1) {
                                     output += `<td${((tablealign[index3 - 1] != null) ? ((isntEmpty(tablealign[index3 - 1])) ? ' style="text-align:' + tablealign[index3 - 1] + '"' : '') : '')}>${heading(element3)}</td>`;
                                 } else {
                                     output += '</tr>';
