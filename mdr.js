@@ -1,678 +1,770 @@
 /**
- * マークダウンをHTMLに変換
- * @param {String} markdown HTMLに変換するマークダウンテキスト
- * @return {String} 結果
+ * mdreader - Markdown to HTML converter
+ * @author hoimohu
+ * @version 3.0.0
+ * @license MIT
  */
-function mdread(markdown) {
-    /**
-     * 文字列が空白ではないかの判定
-     * @param {String} text 検証する文字列
-     * @return {Boolean} 空白ならfalse,空白ではないならtrue
-     */
-    function isntEmpty(text) {
-        if (text !== '') return true;
-        return false;
-    }
 
-    /**
-     * タグで文字列を囲む
-     * @param {String} text 囲む対象の文字列
-     * @param {String} tag 囲むHTMLタグの名前
-     * @param {String} id 要素のid（なくてもいい）
-     * @return {String} 結果
-     */
-    function surroundTag(text, tag, id) {
-        if (id != null) {
-            return `<${tag} ${id}>${text}</${tag}>`;
-        } else {
-            return `<${tag}>${text}</${tag}>`;
+/**
+ * 連続するマーカーの個数を数える
+ * @param {string} md 対象の文字列
+ * @param {number} start 開始位置
+ * @param {string} marker マーカー文字
+ * @return {number} マーカーの個数
+ */
+function countMarkers(md, start, marker) {
+  let count = 0;
+  for (let i = start; i < md.length && md[i] === marker; i++) {
+    count++;
+  }
+  return count;
+}
+
+/**
+ * 指定された位置から連続するマーカーの個数を数える（最大2個まで）
+ * @param {string} md 対象の文字列
+ * @param {number} start 開始位置
+ * @param {string} marker マーカー文字
+ * @return {number} マーカーの個数（最大2）
+ */
+function countMarkersLimited(md, start, marker) {
+  return Math.min(countMarkers(md, start, marker), 3);
+}
+
+/**
+ * 指定されたマーカーの閉じ位置を探する
+ * @param {string} md 対象の文字列
+ * @param {number} start 検索開始位置
+ * @param {string} marker マーカー文字
+ * @param {number} count 必要なマーカーの個数
+ * @return {number} 閉じマーカーの開始位置、見つからない場合は-1
+ */
+function findClosingMarker(md, start, marker, count) {
+  for (let i = start; i < md.length; i++) {
+    if (md[i] === marker) {
+      const markerCount = countMarkers(md, i, marker);
+      if (markerCount >= count) {
+        return i;
+      }
+      // マーカーをスキップ
+      i += markerCount - 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * インライン要素をパースする
+ * @param {string} md markdownの文字列
+ * @return {Array} 子要素の配列
+ */
+function inlineParser(md) {
+  const children = [];
+  let i = 0;
+
+  while (i < md.length) {
+    const char = md[i];
+
+    if (char === '\\' && i + 1 < md.length) {
+      // エスケープ処理
+      children.push({
+        "type": "text",
+        "content": md[i + 1].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+      });
+      i += 2;
+      continue;
+    } else if (char === '`') {
+      // インラインコード
+      const endIdx = md.indexOf('`', i + 1);
+      if (endIdx !== -1) {
+        children.push({
+          "type": "code",
+          "content": md.slice(i + 1, endIdx)
+        });
+        i = endIdx + 1;
+        continue;
+      }
+    } else if (char === '*' || (char === '_' && (i === 0 || md[i - 1] === ' '))) {
+      // strong または em
+      const markerCount = countMarkersLimited(md, i, char);
+
+      if (markerCount === 3) {
+        // strong and em: *** ... *** or ___ ... ___
+        const closeIdx = findClosingMarker(md, i + 3, char, 3);
+        if (closeIdx !== -1) {
+          children.push({
+            "type": "strong",
+            "children": [{
+              "type": "em",
+              "children": inlineParser(md.slice(i + 3, closeIdx))
+            }]
+          });
+          i = closeIdx + 3;
+          continue;
         }
-    }
-
-    /**
-     * エスケープする
-     * @param {String} text 
-     */
-    function escape(text) {
-        return text.replace(/\\&/g, '&amp;').replace(/\\\\/g, '&#92;').replace(/\\`/g, '&#96;').replace(/\\\*/g, '&#42;').replace(/\\_/g, '&#95;').replace(/\\{/g, '&#123;').replace(/\\}/g, '&#125;').replace(/\\\[/g, '&#91;').replace(/\\\]/g, '&#93;').replace(/\\</g, '&lt;').replace(/\\>/g, '&gt;').replace(/\\\(/g, '&#40;').replace(/\\\)/g, '&#41;').replace(/\\#/g, '&#35;').replace(/\\\+/g, '&#43;').replace(/\\-/g, '&#45;').replace(/\\\./g, '&#46;').replace(/\\!/g, '&#33;').replace(/\\\|/g, '&#124;').replace(/\\=/g, '&equals;').replace(/\\~/g, '&sim;').replace(/\\\^/g, '&#094;').replace(/\n|\r\n|\r/g, '\n');
-    }
-
-    /**
-     * コード用にエスケープする
-     * @param {String} code 
-     */
-    function escapeCode(code) {
-        return code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    /**
-     * @type {String} エスケープした文字列
-     */
-    const escaped = escape(markdown);
-    /**
-     * @type {Object} リンクの参照先
-     */
-    const refLink = {};
-    /**
-     * @type {Array<String>} 参照探索用配列
-     */
-    const searchrefArray = ('\n' + escaped).split(/\n\s*```/g);
-    for (let index = 0; index < searchrefArray.length; index++) {
-        if (index % 2 === 0) {
-            /**
-             * @type {Array<String>} 検査する文字列の配列
-             */
-            const element = searchrefArray[index].split('\n');
-            for (let index2 = 0; index2 < element.length; index2++) {
-                /**
-                 * @type {String} 検査する文字列
-                 */
-                const element2 = element[index2];
-                if (element2.match(/^\[.+\]:\s+<.+>/)) {
-                    if (element2.match(/^\[.+\]:\s+<.+>\s*$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+<)\S+(?=>\s*$)/)
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+<.+>\s+".+"$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+<)\S+(?=>\s+\S+\s*$)/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+"/, '').replace(/"\s*$/, '')
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+<.+>\s+'.+'$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+<)\S+(?=>\s+\S+\s*$)/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+'/, '').replace(/'\s*$/, '')
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+<.+>\s+\(.+\)$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+<)\S+(?=>\s+\S+\s*$)/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+\(/, '').replace(/\)\s*$/, '')
-                        };
-                    }
-                } else {
-                    if (element2.match(/^\[.+\]:\s+.+\s*$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+)\S+/)
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+.+\s+".+"$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+)\S+/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+"/, '').replace(/"\s*$/, '')
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+.+\s+'.+'$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+)\S+/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+'/, '').replace(/'\s*$/, '')
-                        };
-                    } else if (element2.match(/^\[.+\]:\s+.+\s+\(.+\)$/)) {
-                        refLink[element2.match(/(?<=^\[).+?(?=\]:\s)/)] = {
-                            href: element2.match(/(?<=^\[.+?\]:\s+)\S+/),
-                            title: element2.replace(/^\[.+?\]:\s+\S+\s+\(/, '').replace(/\)\s*$/, '')
-                        };
-                    }
-                }
+      } else if (markerCount === 2) {
+        // strong: ** ... ** or __ ... __
+        const closeIdx = findClosingMarker(md, i + 2, char, 2);
+        if (closeIdx !== -1) {
+          children.push({
+            "type": "strong",
+            "children": inlineParser(md.slice(i + 2, closeIdx))
+          });
+          i = closeIdx + 2;
+          continue;
+        }
+      } else if (markerCount === 1) {
+        // em: * ... * or _ ... _
+        const closeIdx = findClosingMarker(md, i + 1, char, 1);
+        if (closeIdx !== -1) {
+          children.push({
+            "type": "em",
+            "children": inlineParser(md.slice(i + 1, closeIdx))
+          });
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    } else if (char === '[') {
+      // リンク: [text](url "title")
+      let closeTextIdx = md.indexOf(']', i + 1);
+      if (closeTextIdx !== -1 && md[closeTextIdx + 1] === '(') {
+        if (md.slice(i + 1).match(/^.*!\[.*\]\(.*\).*\]\(.*\)/)) {
+          // リンク中に画像がある場合はリンクの子要素にする
+          let depth = 0;
+          for (let j = i + 1; j + 2 < md.length; j++) {
+            if (md.substring(j, j + 2) === '![') depth++;
+            if (md.substring(j, j + 2) === '](') depth--;
+            if (md[j] === ']' && depth < 0) {
+              closeTextIdx = j;
+              break;
             }
+          }
         }
+        const closeParenthesisIdx = md.indexOf(')', closeTextIdx + 2);
+        const nextSpaceIdx = md.indexOf(' ', closeTextIdx + 2);
+        let title = null;
+        let closeUrlIdx = closeParenthesisIdx;
+        if (nextSpaceIdx !== -1 && nextSpaceIdx < closeParenthesisIdx && md.slice(nextSpaceIdx + 1).match(/^\s*".*"/)) {
+          // タイトルがある場合はURLの終了位置をスペースにする
+          closeUrlIdx = nextSpaceIdx;
+          title = md.slice(nextSpaceIdx + 2, md.indexOf('"', nextSpaceIdx + 2)).trim();
+        }
+        if (closeParenthesisIdx !== -1) {
+          const linkText = md.slice(i + 1, closeTextIdx);
+          const linkUrl = md.slice(closeTextIdx + 2, closeUrlIdx);
+          children.push({
+            "type": "link",
+            "url": linkUrl,
+            "title": title,
+            "children": inlineParser(linkText)
+          });
+          i = closeParenthesisIdx + 1;
+          continue;
+        }
+      } else if (md[closeTextIdx + 1] === '[') {
+        // 参照リンク: [text][id]
+        const closeTextIdx = md.indexOf(']', i + 1);
+        if (closeTextIdx !== -1 && md[closeTextIdx + 1] === '[') {
+          const closeIdIdx = md.indexOf(']', closeTextIdx + 2);
+          if (closeIdIdx !== -1) {
+            const linkText = md.slice(i + 1, closeTextIdx);
+            const linkId = md.slice(closeTextIdx + 2, closeIdIdx);
+            children.push({
+              "type": "referenceLink",
+              "id": linkId,
+              "children": inlineParser(linkText)
+            });
+            i = closeIdIdx + 1;
+            continue;
+          }
+        }
+      } else if (md[i + 1] === '^') {
+        // 脚注: [^id]
+        const closeTextIdx = md.indexOf(']', i + 1);
+        if (closeTextIdx !== -1 && md[i + 1] === '^') {
+          const footnoteId = md.slice(i + 2, closeTextIdx);
+          children.push({
+            "type": "footnote",
+            "id": footnoteId
+          });
+          i = closeTextIdx + 1;
+          continue;
+        }
+      }
+    } else if (char === '<') {
+      // 自動リンク: <url> または <email>
+      const closeIdx = md.indexOf('>', i + 1);
+      if (closeIdx !== -1) {
+        const content = md.slice(i + 1, closeIdx);
+        if (content.match(/^[a-zA-Z]+:\/\//)) {
+          // URL
+          children.push({
+            "type": "link",
+            "url": content,
+            "children": [{
+              "type": "text",
+              "content": content
+            }]
+          });
+        } else if (content.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+          // Email
+          children.push({
+            "type": "link",
+            "url": `mailto:${content}`,
+            "children": [{
+              "type": "text",
+              "content": content
+            }]
+          });
+        } else {
+          // その他はエスケープして表示
+          children.push({
+            "type": "text",
+            "content": `<${content}>`
+          });
+        }
+        i = closeIdx + 1;
+        continue;
+      }
+    } else if (char === '!') {
+      // 画像: ![alt](url "title")
+      if (i + 1 < md.length && md[i + 1] === '[') {
+        const closeAltIdx = md.indexOf(']', i + 2);
+        if (closeAltIdx !== -1 && md[closeAltIdx + 1] === '(') {
+          const closeParenthesisIdx = md.indexOf(')', closeAltIdx + 2);
+          const nextSpaceIdx = md.indexOf(' ', closeAltIdx + 2);
+          let closeUrlIdx = closeParenthesisIdx;
+          let title = null;
+          if (nextSpaceIdx !== -1 && nextSpaceIdx < closeParenthesisIdx && md.slice(nextSpaceIdx + 1).match(/^\s*".*"/)) {
+            // タイトルがある場合はURLの終了位置をスペースにする
+            closeUrlIdx = nextSpaceIdx;
+            title = md.slice(nextSpaceIdx + 2, md.indexOf('"', nextSpaceIdx + 2)).trim();
+          }
+          if (closeParenthesisIdx !== -1) {
+            const altText = md.slice(i + 2, closeAltIdx);
+            const imageUrl = md.slice(closeAltIdx + 2, closeUrlIdx);
+            children.push({
+              "type": "image",
+              "url": imageUrl,
+              "alt": altText,
+              "title": title
+            });
+            i = closeParenthesisIdx + 1;
+            continue;
+          }
+        }
+      }
+    } else if (char === '$') {
+      // インライン数式: $...$
+      const closeIdx = md.indexOf('$', i + 1);
+      if (closeIdx !== -1) {
+        children.push({
+          "type": "math",
+          "content": md.slice(i + 1, closeIdx)
+        });
+        i = closeIdx + 1;
+        continue;
+      }
+    } else if (char === '~') {
+      // 打ち消し線 または 下付き文字: ~~...~~ または ~...~
+      const markerCount = countMarkersLimited(md, i, char);
+
+      if (markerCount === 2) {
+        // 打ち消し線: ~~...~~
+        const closeIdx = findClosingMarker(md, i + 2, char, 2);
+        if (closeIdx !== -1) {
+          children.push({
+            "type": "deleted",
+            "children": inlineParser(md.slice(i + 2, closeIdx))
+          });
+          i = closeIdx + 2;
+          continue;
+        }
+      } else if (markerCount === 1) {
+        // 下付き文字: ~...~
+        const closeIdx = findClosingMarker(md, i + 1, char, 1);
+        if (closeIdx !== -1) {
+          children.push({
+            "type": "subscript",
+            "children": inlineParser(md.slice(i + 1, closeIdx))
+          });
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    } else if (char === '^') {
+      // 上付き文字: ^...^
+      const closeIdx = md.indexOf('^', i + 1);
+      if (closeIdx !== -1) {
+        children.push({
+          "type": "superscript",
+          "children": inlineParser(md.slice(i + 1, closeIdx))
+        });
+        i = closeIdx + 1;
+        continue;
+      }
+    } else if (char === '=') {
+      // ハイライト: ==...==
+      const closeIdx = findClosingMarker(md, i + 2, char, 2);
+      if (closeIdx !== -1) {
+        children.push({
+          "type": "highlight",
+          "children": inlineParser(md.slice(i + 2, closeIdx))
+        });
+        i = closeIdx + 2;
+        continue;
+      }
     }
 
-    /**
-     * ハイパーリンクの追加等
-     * @param {String} text 変換するテキスト
-     */
-    function href(text) {
-        if (text.match(/^\[.+\]:\s+<.+>/) || text.match(/^\[.+\]:\s+.+\s*$/)) {
-            // 参照リンクの参照元を削除
-            return '<!-- ' + text + ' -->';
-        } else if (text.match(/<[^<>\s]+:\/\/[^<>\s]+\.[^<>\s]+>/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/<[^<>\s]+:\/\/[^<>\s]+\.[^<>\s]+>/)[0];
-            return href(text.replace(/<[^<>\s]+:\/\/[^<>\s]+\.[^<>\s]+>/, `<a href="${matched.match(/(?<=^<).+(?=>$)/)[0]}">${matched.match(/(?<=^<).+(?=>$)/)[0]}</a>`));
-        } else if (text.match(/<[^<>\s]+@[^<>\s]+\.[^<>\s]+>/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/<[^<>\s]+@[^<>\s]+\.[^<>\s]+>/)[0];
-            return href(text.replace(/<[^<>\s]+@[^<>\s]+\.[^<>\s]+>/, `<a href="${matched.match(/(?<=^<).+(?=>$)/)[0]}">${matched.match(/(?<=^<).+(?=>$)/)[0]}</a>`));
-        } else if (text.match(/!\[.+?\]\([^\(\)\s]+? "[^\[\]\(\) "]+"\)/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/!\[.+?\]\([^\(\)\s]+? "[^\[\]\(\) "]+"\)/)[0];
-            return href(text.replace(/!\[.+?\]\([^\(\)\s]+? "[^!\[\]\(\) "]+"\)/, `<img src="${matched.match(/(?<=^!\[.+?\]\()[^\(\)\s]+?(?= "[^\[\]\(\) "]*?"\)$)/)[0]}" title="${matched.match(/(?<=^!\[.+?\]\([^\(\)\s]+? ").*?(?="\)$)/)[0]}" alt="${matched.match(/(?<=^!\[).+?(?=\]\([^\(\)\s]+? "[^\[\]\(\) "]*?"\))/)[0]}">`));
-        } else if (text.match(/!\[.+\]\([^\(\)\s]+\)/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/!\[.+?\]\([^\(\)\s]+?\)/)[0];
-            return href(text.replace(/!\[.+?\]\([^\(\)\s]+?\)/, `<img src="${matched.match(/(?<=^!\[.+?\]\()[^\(\)\s]+?(?=\)$)/)[0]}" alt="${matched.match(/(?<=^!\[).+?(?=\]\([^\(\)\s]+?\))/)[0]}">`));
-        } else if (text.match(/\[.+\]\([^\(\)\s]+\)/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/\[.+?\]\([^\(\)\s]+?\)/)[0];
-            return href(text.replace(/\[.+?\]\([^\(\)\s]+?\)/, `<a href="${matched.match(/(?<=^\[.+?\]\()[^\(\)\s]+?(?=\)$)/)[0]}">${matched.match(/(?<=^\[).+?(?=\]\([^\(\)\s]+?\))/)[0]}</a>`));
-        } else if (text.match(/\[.+?\]\([^\(\)\s]+? "[^\[\]\(\) "]+"\)/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/\[.+?\]\([^\(\)\s]+ "[^\[\]\(\) "]+"\)/)[0];
-            return href(text.replace(/\[.+?\]\([^\(\)\s]+? "[^\[\]\(\) "]+"\)/, `<a href="${matched.match(/(?<=^\[.+?\]\()[^\(\)\s]+?(?= "[^\[\]\(\) "]*?"\)$)/)[0]}" title="${matched.match(/(?<=^\[.+?\]\([^\(\)\s]+? ").*?(?="\)$)/)[0]}">${matched.match(/(?<=^\[).+?(?=\]\([^\(\)\s]+? "[^\[\]\(\) "]*?"\))/)[0]}</a>`));
-        } else if (text.match(/\[[^\[\]]+\]\s*\[[^\s\[\]]+\]/)) {
-            /**
-             * @type {String} マッチした文字列
-             */
-            const matched = text.match(/\[[^\[\]]+\]\s*\[[^\s\[\]]+\]/)[0];
-            const refIndex = matched.match(/(?<=^\[[^\[\]]+\]\s*\[)[^\s\[\]]+(?=\]$)/)[0];
-            if (Object.prototype.hasOwnProperty.call(refLink, refIndex)) {
-                return href(text.replace(/\[[^\[\]]+\]\s*\[[^\s\[\]]+\]/, `<a href="${refLink[refIndex].href}" title="${((refLink[refIndex].title != null) ? (refLink[refIndex].title.replace(/"/g, '&quot;')) : (refLink[refIndex].href))}">${matched.match(/(?<=^\[)[^\[\]]+(?=\]\s*\[[^\s\[\]]+\]$)/)[0]}</a>`));
-            } else return href(text.replace(/\[[^\[\]]+\]\s*\[[^\s\[\]]+\]/, text.match(/\[[^\[\]]+\]\s*\[[^\s\[\]]+\]/)[0].replace(/\[/g, '&#91;').replace(/\]/g, '&#93;')));
-        } else {
-            return text;
-        }
-    }
-    /**
-     * 文字の装飾
-     * @param {String} text 変換するテキスト
-     */
-    function decoration(text) {
-        if (text.match(/^\s*(\*\*\*|---|___)[\*-_]*\s*$/)) {
-            return '<hr>';
-        }
-        if (text.match(/\*\*\*.+\*\*\*/)) {
-            return decoration(text.replace(/\*\*\*.+?\*\*\*/, '<strong><em>' + text.match(/(?<=\*\*\*).+?(?=\*\*\*)/)[0] + '</em></strong>'));
-        } else if (text.match(/(^\*| \*)\*_.+_\*(\* |\*$)/)) {
-            return decoration(text.replace(/(^\*| \*)\*_.+_\*(\* |\*$)/, '<strong><em>' + text.match(/(?<=(^\*| \*)\*_).+?(?=_\*(\* |\*$))/)[0] + '</em></strong> '));
-        } else if (text.match(/(^\*| \*)__.+__(\* |\*$)/)) {
-            return decoration(text.replace(/(^\*| \*)__.+__(\* |\*$)/, '<strong><em>' + text.match(/(?<=(^\*| \*)__).+?(?=__(\* |\*$))/)[0] + '</em></strong> '));
-        } else if (text.match(/(^_| _)\*\*.+\*\*(_ |_$)/)) {
-            return decoration(text.replace(/(^_| _)\*\*.+\*\*(_ |_$)/, '<strong><em>' + text.match(/(?<=(^_| _)\*\*).+?(?=\*\*(_ |_$))/)[0] + '</em></strong> '));
-        } else if (text.match(/(^_| _)_\*.+\*_(_ |_$)/)) {
-            return decoration(text.replace(/(^_| _)_\*.+\*_(_ |_$)/, '<strong><em>' + text.match(/(?<=(^_| _)_\*).+?(?=\*_(_ |_$))/)[0] + '</em></strong> '));
-        } else if (text.match(/(^_| _)__.+__(_ |_$)/)) {
-            return decoration(text.replace(/(^_| _)__.+__(_ |_$)/, '<strong><em>' + text.match(/(?<=(^_| _)__).+?(?=__(_ |_$))/)[0] + '</em></strong> '));
-        } else if (text.match(/\*\*.+\*\*/)) {
-            return decoration(text.replace(/\*\*.+?\*\*/, '<strong>' + text.match(/(?<=\*\*).+?(?=\*\*)/)[0] + '</strong>'));
-        } else if (text.match(/\*.+\*/)) {
-            return decoration(text.replace(/\*.+?\*/, '<em>' + text.match(/(?<=\*).+?(?=\*)/)[0] + '</em>'));
-        } else if (text.match(/(^_| _)_.+_(_ |_$)/)) {
-            return decoration(text.replace(/(^_| _)_.+?_(_ |_$)/, '<strong>' + text.match(/(?<=(^_| _)_).+?(?=_(_ |_$))/)[0] + '</strong> '));
-        } else if (text.match(/(^_| _).+(_ |_$)/)) {
-            return decoration(text.replace(/(^_| _).+?(_ |_$)/, '<em>' + text.match(/(?<=(^_| _)).+?(?=(_ |_$))/)[0] + '</em> '));
-        } else if (text.match(/``.+?``/)) {
-            return decoration(text.replace(/``.+?``/, '<code>' + escapeCode(text.match(/(?<=``).+?(?=``)/)[0].replace(/`/g, '&#96;')) + '</code>'));
-        } else if (text.match(/`.+?`/)) {
-            return decoration(text.replace(/`.+?`/, '<code>' + escapeCode(text.match(/(?<=`).+?(?=`)/)[0]) + '</code>'));
-        } else if (text.match(/~~.+~~/)) {
-            return decoration(text.replace(/~~.+?~~/, '<del>' + text.match(/(?<=~~).+?(?=~~)/)[0] + '</del>'));
-        } else if (text.match(/~.+~/)) {
-            return decoration(text.replace(/~.+?~/, '<sub>' + text.match(/(?<=~).+?(?=~)/)[0] + '</sub>'));
-        } else if (text.match(/\^.+\^/)) {
-            return decoration(text.replace(/\^.+?\^/, '<sup>' + text.match(/(?<=\^).+?(?=\^)/)[0] + '</sup>'));
-        } else if (text.match(/==.+==/)) {
-            return decoration(text.replace(/==.+?==/, '<mark>' + text.match(/(?<===).+?(?===)/)[0] + '</mark>'));
-        } else if (text.match(/  $/)) {
-            return href(text.match(/.*(?=  $)/)[0]) + '<br>';
-        } else {
-            return href(text);
-        }
-    }
 
-    /**
-     * 見出しを変換
-     * @param {String} text 変換する文字列
-     * @return {String} 結果
-     */
-    function heading(text) {
-        if (text.match(/^#+\s+.+/) && text.match(/(?<=^#*)#/g).length < 7) {
-            const id = text.match(/(?<=^#+\s+.+\s+{#).+(?=}\s*$)/);
-            if (id) {
-                return surroundTag(decoration(text.match(/(?<=^#+\s+).+(?=\s+{#.+}\s*$)/)[0]), 'h' + text.match(/(?<=^#*)#/g).length, id[0]);
+    // 通常テキスト
+    if (children.length > 0 && children[children.length - 1].type === "text") {
+      children[children.length - 1].content += char;
+    } else {
+      children.push({
+        "type": "text",
+        "content": char
+      });
+    }
+    i++;
+  }
+
+  if (children.length > 0 && children[children.length - 1].type === "text" && children[children.length - 1].content.match(/\s\s+$/)) {
+    children[children.length - 1].content = children[children.length - 1].content.replace(/\s\s+$/, " ");
+    children.push({
+      "type": "lineBreak"
+    });
+  }
+
+  return children;
+}
+
+/**
+ * テーブル行をセルに分解する
+ * @param {string} line テーブル行文字列
+ * @returns {string[]} セル文字列の配列
+ */
+function splitTableLine(line) {
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.replace(/\\\\/g, '&#92;').replace(/\\\|/g, '&#124;').split('|').map(cell => cell.trim());
+}
+
+/**
+ * 区切り行がテーブル区切りとして妥当か判定する
+ * @param {string} line 区切り行文字列
+ * @returns {boolean}
+ */
+function isTableDividerLine(line) {
+  const cells = splitTableLine(line);
+  if (cells.length < 1) return false;
+  return cells.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+/**
+ * 区切り行トークンから整列情報を取得する
+ * @param {string[]} cells 区切りセル文字列
+ * @returns {Array<string>} left/center/right/''
+ */
+function parseTableAlign(cells) {
+  return cells.map(cell => {
+    const t = cell.trim();
+    const left = t.startsWith(':');
+    const right = t.endsWith(':');
+    if (left && right) return 'center';
+    if (left) return 'left';
+    if (right) return 'right';
+    return '';
+  });
+}
+
+/**
+ * ブロック要素をパースする
+ * @param {string} md markdownの文字列
+ * @return {Array} 子要素の配列
+ */
+function blockParser(md) {
+  const children = [];
+
+  const lines = (md + '\n').split("\n");
+
+  let paragraphEnded = true;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^#+\s/)) {
+      const level = line.match(/^#+/)[0].length;
+      if (level <= 6) {
+        children.push({
+          "type": "heading",
+          "level": level,
+          "children": inlineParser(line.slice(level + 1).trimStart())
+        });
+      } else {
+        children.push({
+          "type": "paragraph",
+          "children": inlineParser(line.trimStart())
+        });
+      }
+    } else if (line.includes("|") && i + 1 < lines.length && isTableDividerLine(lines[i + 1])) {
+      const tableLines = [line];
+      // 次行は必ずテーブル区切り行
+      tableLines.push(lines[i + 1]);
+      i += 2;
+      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      i--;
+
+      const headerCells = splitTableLine(tableLines[0]).map(c => inlineParser(c));
+      const align = parseTableAlign(splitTableLine(tableLines[1]));
+      const rows = tableLines.slice(2).map(row => splitTableLine(row).map(c => inlineParser(c)));
+
+      children.push({
+        "type": "table",
+        "align": align,
+        "header": headerCells,
+        "rows": rows
+      });
+    } else if (line.match(/^(  |\t)*(-|\*|\+|\d+\.)\s/)) {
+      let indentLevel = 0;
+      let tmpLine = line;
+      while (tmpLine.match(/^(  |\t)/)) {
+        indentLevel++;
+        tmpLine = tmpLine.replace(/^(  |\t)/, "");
+      }
+      const listType = line.trimStart().match(/^[-\*\+]/) ? "unordered" : "ordered";
+      let currentList = null;
+      for (let j = children.length - 1; j >= 0; j--) {
+        if (children[j].type === "list") {
+          let listCandidate = null;
+          function listSearch(list) {
+            if (list.indentLevel === indentLevel && list.ordered === (listType === "ordered")) {
+              return list;
+            } else if (list.indentLevel < indentLevel && (listCandidate === null || listCandidate.indentLevel < list.indentLevel)) {
+              listCandidate = list;
+            }
+            if (list.items.length > 0) {
+              const lastItem = list.items[list.items.length - 1];
+              if (lastItem.children.length > 0) {
+                for (let k = lastItem.children.length - 1; k >= 0; k--) {
+                  const child = lastItem.children[k];
+                  if (child.type === "list") {
+                    const found = listSearch(child);
+                    if (found !== null) return found;
+                    break;
+                  }
+                }
+              }
+            }
+            return null;
+          }
+          let tmpList = listSearch(children[j]);
+          if (tmpList === null) {
+            if (listCandidate !== null) {
+              tmpList = listCandidate;
             } else {
-                return surroundTag(decoration(text.match(/(?<=^#+\s+).+$/)[0]), 'h' + text.match(/(?<=^#*)#/g).length);
+              continue;
             }
-        } else return decoration(text);
-    }
-
-    /**
-     * 表を変換
-     * @param {String} text 変換するテキスト
-     */
-    function table(text) {
-        /**
-         * @type {Array<String>} 文字列を分解した配列
-         */
-        const spl = text.split('\n');
-        /**
-         * @type {String} 出力文字列
-         */
-        let output = '';
-        /**
-         * @type {Array<String>} テーブル変換用配列
-         */
-        const tableRow = [];
-        /**
-         * @type {Boolean} 段落かどうか
-         */
-        let isParagraph = false;
-        for (let index = 0; index < spl.length; index++) {
-            /**
-             * @type {String} 変換する文字列
-             */
-            const element = spl[index];
-            if (element.match(/^\|\s*.+\s*\|$/)) {
-                if (tableRow.length === 0 && element.match(/^\|.+\|$/)) {
-                    tableRow.push(element);
-                } else if (tableRow.length === 1 && element.match(/^\|[\s-:\|]*---[\s-:\|]*\|$/)) {
-                    tableRow.push(element);
-                } else if (1 < tableRow.length && element.match(/^\|.+\|$/)) {
-                    tableRow.push(element);
-                }
-            } else {
-                if (tableRow.length < 3) {
-                    if (!isParagraph && isntEmpty(element)) {
-                        output += '<p>\n';
-                        isParagraph = true;
-                    } if (isParagraph && !isntEmpty(element)) {
-                        output += '</p>';
-                        isParagraph = false;
-                    }
-                    while (tableRow.length !== 0) {
-                        output += heading(tableRow.shift());
-                    }
-                    if (isntEmpty(element)) {
-                        output += heading(element);
-                    }
-                } else {
-                    /**
-                     * @type {Array<string>} 表の寄せの配列
-                     */
-                    let tablealign = [];
-                    tableRow[1].split('|').forEach(e => {
-                        if (e.match(/\s*:---+:\s*/)) {
-                            tablealign.push('center');
-                        } else if (e.match(/\s*:---+\s*/)) {
-                            tablealign.push('left');
-                        } else if (e.match(/\s*---+:\s*/)) {
-                            tablealign.push('right');
-                        } else {
-                            tablealign.push('');
-                        }
-                    })
-                    for (let index2 = 0; index2 < tableRow.length; index2++) {
-                        /**
-                         * @type {Array<String>} 変換する文字列を分解した配列
-                         */
-                        const element2 = tableRow[index2].split('|');
-                        for (let index3 = 0; index3 < element2.length; index3++) {
-                            /**
-                             * @type {String} 変換する文字列
-                             */
-                            const element3 = element2[index3];
-                            if (index2 === 0) {
-                                if (index3 === 0) {
-                                    output += '<table><thead><tr>';
-                                } else if (index3 !== element2.length - 1) {
-                                    output += `<th${((tablealign[index3 - 1] != null) ? ((isntEmpty(tablealign[index3 - 1])) ? ' style="text-align:' + tablealign[index3 - 1] + '"' : '') : '')}>${heading(element3)}</th>`;
-                                } else {
-                                    output += '</tr></thead><tbody>';
-                                }
-                            } else if (index2 !== 1) {
-                                if (index3 === 0) {
-                                    output += '<tr>';
-                                } else if (index3 !== tableRow[index2].split('|').length - 1) {
-                                    output += `<td${((tablealign[index3 - 1] != null) ? ((isntEmpty(tablealign[index3 - 1])) ? ' style="text-align:' + tablealign[index3 - 1] + '"' : '') : '')}>${heading(element3)}</td>`;
-                                } else {
-                                    output += '</tr>';
-                                }
-                            }
-                        }
-                        if (index2 === tableRow.length - 1) {
-                            output += '</tbody></table>';
-                        }
-                    }
-                }
-            }
-        }
-        return output;
-    }
-
-    /**
-     * リストを変換
-     * @param {String} text 変換する文字列
-     * @return {String} 結果
-     */
-    function list(text) {
-        /**
-         * @type {Array<String>} 文字列を分解した配列
-         */
-        const spl = text.split('\n');
-        /**
-         * @type {Number} 引用要素の入れ子の深さ
-         */
-        let depth = -1;
-        /**
-         * @type {String} 出力文字列
-         */
-        let output = '';
-        /**
-         * @type {String} 文字列をためる用
-         */
-        let stock = '';
-        /**
-         * @type {Array<String>} リストの入れ子を管理
-         */
-        let listType = [];
-        /**
-         * @type {Boolean} li要素が閉じられているか
-         */
-        let isLi = false;
-
-        for (let index = 0; index < spl.length; index++) {
-            /**
-             * @type {String} 変換する文字列
-             */
-            const element = spl[index];
-            if (element.match(/^\s*(\*|\+|-|\d+\.)\s/)) {
-                /**
-                 * @type {Number} 変換する文字列の入れ子の深さ（インデント量）
-                 */
-                const thisDepth = (element.match(/^(    |\t)/g) ? element.match(/^(    |\t)/g).length : 0);
-                if (depth === -1) {
-                    if (isntEmpty(stock)) {
-                        output += table(stock);
-                        stock = '';
-                    }
-                } else {
-                    if (isntEmpty(stock)) {
-                        output += precode(stock);
-                        stock = '';
-                    }
-                }
-                if (depth < thisDepth) {
-                    if (element.match(/^\d+\.\s/)) {
-                        listType.push('ol');
-                        output += '<ol>';
-                    } else {
-                        listType.push(element.match(/(?<=^\s*)(\*|\+|-|\d+\.)(?=\s)/)[0]);
-                        output += '<ul>';
-                    }
-                    depth = thisDepth;
-                    isLi = false;
-                } else if (thisDepth < depth) {
-                    if (isLi) {
-                        output += '</li>';
-                        isLi = false;
-                    }
-                    while (listType.length <= thisDepth) {
-                        output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                    }
-                    depth = thisDepth;
-                }
-                if (listType[listType.length - 1] !== element.match(/(?<=^\s*)(\*|\+|-|\d+\.)(?=\s)/)[0].replace(/\d/, 'ol')) {
-                    if (isLi) {
-                        output += '</li>';
-                        isLi = false;
-                    }
-                    output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                    if (element.match(/^\d+\.\s/)) {
-                        listType.push('ol');
-                        output += '<ol>';
-                    } else {
-                        listType.push(element.match(/(?<=^\s*)(\*|\+|-|\d+\.)(?=\s)/)[0]);
-                        output += '<ul>';
-                    }
-                }
-                if (isLi) {
-                    output += '</li>';
-                }
-                if (element.match(/^\s*(\*|\+|-)\s+\[( |x)\]/)) {
-                    output += '<li><input type="checkbox" disabled' + ((element.match(/(?<=\s*(\*|\+|-)\s+\[)( |x)(?=\].*$)/)[0] === 'x') ? ' checked' : '') + '>' + heading(element.match(/(?<=^\s*(\*|\+|-)\s+\[( |x)\]).*$/)[0].replace(/^\s*/, ''));
-                } else {
-                    output += '<li>' + heading(element.replace(/^\s*(\d+\.|\*|\+|-)\s+/, '')) + '\n';
-                }
-                isLi = true;
-            } else {
-                if (spl.length !== index + 1 && index !== 0 && listType.length !== 0) {
-                    if (!isntEmpty(spl[index - 1] + spl[index + 1]) && element.match(/^(    |\t)/)) {
-                        stock += element.replace(/^\s+/, '');
-                    } else if (!(
-                        !isntEmpty(element + spl[index + 2]) && spl[index + 1].match(/^(    |\t)/) ||
-                        !isntEmpty(element + spl[index - 2]) && spl[index - 1].match(/^(    |\t)/)
-                    )) {
-                        depth = -1;
-                        if (listType.length > 0) {
-                            if (isLi) {
-                                output += '</li>';
-                                isLi = false;
-                            }
-                            while (listType.length > 1) {
-                                output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                            }
-                            output += (listType.pop() === 'ol' ? '</ol>' : '</ul>');
-                        }
-                        stock += '\n' + element.replace(/^\s+/, '');
-                    }
-                } else {
-                    if (spl.length === index + 1 && listType.length !== 0 && element.match(/^(    |\t)/)) {
-                        if (!isntEmpty(spl[index - 1])) {
-                            stock += element.replace(/^\s+/, '');
-                        } else {
-                            depth = -1;
-                            if (listType.length > 0) {
-                                if (isLi) {
-                                    output += '</li>';
-                                    isLi = false;
-                                }
-                                while (listType.length > 1) {
-                                    output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                                }
-                                output += (listType.pop() === 'ol' ? '</ol>' : '</ul>');
-                            }
-                            stock += '\n' + element.replace(/^\s+/, '');
-                        }
-                    } else {
-                        depth = -1;
-                        stock += '\n' + element;
-                    }
-                }
-            }
-        }
-        if (depth === -1) {
-            if (listType.length > 0) {
-                if (isLi) {
-                    output += '</li>';
-                    isLi = false;
-                }
-                while (listType.length > 1) {
-                    output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                }
-                output += (listType.pop() === 'ol' ? '</ol>' : '</ul>');
-            }
-            if (isntEmpty(stock)) {
-                const spl2 = stock.split('\n');
-                let codeBlock = '';
-                let stock2 = '';
-                for (let index = 0; index < spl2.length; index++) {
-                    const element = spl2[index];
-                    if (element.match(/^(    |\t)/)) {
-                        if (isntEmpty(stock2)) {
-                            output += table(stock2);
-                            stock2 = '';
-                        }
-                        codeBlock += '\n' + element.replace(/^(    |\t)/, '');
-                    } else if (isntEmpty(codeBlock)) {
-                        output += '<pre><code>' + escapeCode(codeBlock) + '</code></pre>';
-                        codeBlock = '';
-                        stock2 += '\n' + element;
-                    } else {
-                        stock2 += '\n' + element;
-                    }
-                }
-                output += table(stock2);
-            }
+          }
+          if (tmpList.indentLevel === indentLevel && tmpList.ordered === (listType === "ordered")) {
+            currentList = tmpList;
+            break;
+          } else if (tmpList.indentLevel < indentLevel) {
+            currentList = {
+              "type": "list",
+              "ordered": listType === "ordered",
+              "indentLevel": indentLevel,
+              "items": []
+            };
+            tmpList.items[tmpList.items.length - 1].children.push(currentList);
+            break;
+          } else if (tmpList.indentLevel > indentLevel) {
+            continue;
+          } else {
+            break;
+          }
         } else {
-            if (isntEmpty(stock)) {
-                output += precode(stock);
-                stock = '';
-            }
-            if (listType.length > 0) {
-                if (isLi) {
-                    output += '</li>';
-                    isLi = false;
-                }
-                while (listType.length > 1) {
-                    output += (listType.pop() === 'ol' ? '</ol></li>' : '</ul></li>');
-                }
-                output += (listType.pop() === 'ol' ? '</ol>' : '</ul>');
-            }
+          break;
         }
-        return output;
-    }
-
-    /**
-     * 引用を変換
-     * @param {String} text 変換する文字列
-     * @return {String} 結果
-     */
-    function blockquote(text) {
-        if (('\n' + text).match(/\n>/)) {
-            /**
-             * @type {Array<String>} 文字列を分解した配列
-             */
-            const spl = text.split('\n');
-            /**
-             * @type {Number} 引用要素の入れ子の深さ
-             */
-            let depth = 0;
-            /**
-             * @type {String} 出力文字列
-             */
-            let output = '';
-            /**
-             * @type {String} 文字列をためる用
-             */
-            let stock = '';
-
-            //見出しを挿入(==,--)
-            for (let index = 0; index < spl.length; index++) {
-                if (index > 0) {
-                    const previous = spl[index - 1];
-                    const current = spl[index];
-                    if (previous.match(/\S/)) {
-                        if (current.match(/^==+$/)) {
-                            spl[index - 1] = '# ' + spl[index - 1];
-                            spl[index] = '';
-                        } else if (current.match(/^--+$/)) {
-                            spl[index - 1] = '## ' + spl[index - 1];
-                            spl[index] = '';
-                        }
-                    }
-                }
-            }
-            for (let index = 0; index < spl.length; index++) {
-                /**
-                 * @type {String} 変換する文字列
-                 */
-                const element = spl[index];
-                if (element.match(/^>+\s+/)) {
-                    /**
-                     * @type {Number} 変換する文字列の入れ子の深さ
-                     */
-                    const thisDepth = element.match(/(?<=^>*)>/g).length;
-                    if (depth < thisDepth) {
-                        output += precode(stock);
-                        stock = '';
-                        for (let count = 0; count < thisDepth - depth; count++) {
-                            output += '<blockquote>\n';
-                        }
-                        depth = thisDepth;
-                    } else if (thisDepth < depth) {
-                        output += precode(stock);
-                        stock = '';
-                        for (let count = 0; count < depth - thisDepth; count++) {
-                            output += '</blockquote>\n';
-                        }
-                        depth = thisDepth;
-                    }
-                    stock += element.match(/(?<=^>+\s+).*/);
-                } else {
-                    if (isntEmpty(stock)) {
-                        output += precode(stock);
-                    }
-                    stock = '';
-                    for (let count = 0; count < depth; count++) {
-                        output += '</blockquote>\n';
-                    }
-                    output += list(element) + '\n';
-                    depth = 0;
-                }
-            }
-            return output;
+      }
+      if (currentList === null) {
+        children.push({
+          "type": "list",
+          "ordered": listType === "ordered",
+          "indentLevel": indentLevel,
+          "items": []
+        });
+        currentList = children[children.length - 1];
+      }
+      if (line.trimStart().match(/^(-|\*|\+)\s\[[ xX]\]/)) {
+        // チェックリスト: - [ ] task または - [x] task
+        const checked = line.replace(/^(-|\*|\+)\s\[/, "")[0].toLowerCase() === "x";
+        currentList.items.push({
+          "type": "checkListItem",
+          "checked": checked,
+          "children": inlineParser(line.trimStart().replace(/^(-|\*|\+|\d+\.)\s/, "").trimStart())
+        });
+      } else {
+        currentList.items.push({
+          "type": "listItem",
+          "children": inlineParser(line.trimStart().replace(/^(-|\*|\+|\d+\.)\s/, "").trimStart())
+        });
+      }
+    } else if (line.startsWith(">")) {
+      let blockQuoteBuffer = [];
+      while (i < lines.length && lines[i].startsWith(">")) {
+        blockQuoteBuffer.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      children.push({
+        "type": "blockQuote",
+        "children": blockParser(blockQuoteBuffer.join("\n"))
+      });
+      i--;
+    } else if (line.startsWith("```")) {
+      const language = line.slice(3).trim();
+      const codeBlockBuffer = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeBlockBuffer.push(lines[i]);
+        i++;
+      }
+      children.push({
+        "type": "codeBlock",
+        "language": language,
+        "content": codeBlockBuffer.join("\n")
+      });
+    } else if (line.startsWith("    ") || line.startsWith("\t")) {
+      const codeBlockBuffer = [];
+      while (i < lines.length && (lines[i].startsWith("    ") || lines[i].startsWith("\t"))) {
+        codeBlockBuffer.push(lines[i].replace(/^(    |\t)/, ""));
+        i++;
+      }
+      children.push({
+        "type": "codeBlock",
+        "language": "",
+        "content": codeBlockBuffer.join("\n")
+      });
+      i--;
+    } else if (line.startsWith("$$")) {
+      const mathBlockBuffer = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("$$")) {
+        mathBlockBuffer.push(lines[i]);
+        i++;
+      }
+      children.push({
+        "type": "mathBlock",
+        "content": mathBlockBuffer.join("\n")
+      });
+      i--;
+    } else if (line.startsWith(":::note")) {
+      const noteType = line.slice(6).trim();
+      const noteBuffer = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith(":::")) {
+        noteBuffer.push(lines[i]);
+        i++;
+      }
+      children.push({
+        "type": "note",
+        "noteType": noteType,
+        "children": blockParser(noteBuffer.join("\n"))
+      });
+      i--;
+    } else if (line.match(/^(---+|___+|\*\*\*+)$/)) {
+      children.push({
+        "type": "thematicBreak"
+      });
+    } else if (line.match(/^(==+|--+)$/)) {
+      // Setextスタイルの見出し: ==... または --...
+      if (children.length > 0 && children[children.length - 1].type === "paragraph") {
+        const level = line[0] === '=' ? 1 : 2;
+        children[children.length - 1] = {
+          "type": "heading",
+          "level": level,
+          "children": children[children.length - 1].children
+        };
+      }
+    } else if (line.match(/^\s*\[.*\]:\s/)) {
+      // 参照定義または脚注定義
+      const closeIdIdx = line.indexOf(']');
+      if (closeIdIdx !== -1 && line[closeIdIdx + 1] === ':') {
+        if (line[1] === '^') {
+          // 脚注定義: [^id]: footnote
+          const id = line.slice(2, closeIdIdx);
+          const footnote = line.slice(closeIdIdx + 2).trim();
+          children.push({
+            "type": "footnoteDefinition",
+            "id": id,
+            "footnote": footnote
+          });
+          continue;
         } else {
-
-            /**
-             * @type {Array<String>} 文字列を分解した配列
-             */
-            const spl = text.split('\n');
-
-            // 見出しを挿入(==,--)
-            for (let index = 0; index < spl.length; index++) {
-                if (index > 0) {
-                    const previous = spl[index - 1];
-                    const current = spl[index];
-                    if (previous.match(/\S/)) {
-                        if (current.match(/^==+$/)) {
-                            spl[index - 1] = '# ' + spl[index - 1];
-                            spl[index] = '';
-                        } else if (current.match(/^--+$/)) {
-                            spl[index - 1] = '## ' + spl[index - 1];
-                            spl[index] = '';
-                        }
-                    }
-                }
-            }
-            return list(spl.join('\n'));
+          // 参照定義: [id]: url "title"
+          const id = line.slice(1, closeIdIdx);
+          let url = line.slice(closeIdIdx + 2).trim().match(/^\S+/)[0];
+          if (url != null && url.match(/^<.*>$/)) {
+            url = url.slice(1, -1);
+          }
+          const titleMatch = line.slice(closeIdIdx + 2).trim().match(/^\S+\s+"(.*)"$/);
+          const title = titleMatch ? titleMatch[1] : "";
+          children.push({
+            "type": "referenceDefinition",
+            "id": id,
+            "url": url,
+            "title": title
+          });
         }
-    }
+      }
 
-    /**
-     * コードブロックを変換
-     * @param {String} text 変換する文字列
-     * @return {String} 結果
-     */
-    function precode(text) {
-        /**
-         * @type {Array<String>} 文字列を分解した配列
-         */
-        const spl = ('\n' + text + '\n').split(/\n\s*```/g);
-        /**
-         * @type {String} 出力文字列
-         */
-        let output = '';
-        for (let index = 0; index < spl.length; index++) {
-            /**
-             * @type {String} 変換する文字列
-             */
-            const element = spl[index];
-            if (index % 2 === 0) {
-                if (index === spl.length - 1 && spl.length !== 1) {
-                    output += blockquote('\n```' + element);
-                } else {
-                    output += blockquote(element);
-                }
-            } else {
-                if (!element.match(/^\s*\n/)) {
-                    output += '<pre class="language-' + element.match(/^(?<=\s*).+(?=\n)/)[0].replace(/</g, '&lt;').replace(/>/g, '&gt;') + '"><code>' + element.replace(/^.+/, '') + '</code></pre>';
-                } else {
-                    output += '<pre><code>' + escapeCode(element) + '</code></pre>';
-                }
-            }
-        }
-        return output;
+    } else if (line.trim() === "") {
+      if (children.length > 0 && children[children.length - 1].type === "paragraph") {
+        paragraphEnded = true;
+      }
+    } else {
+      if (children.length > 0 && children[children.length - 1].type === "paragraph" && !paragraphEnded) {
+        children[children.length - 1].children.push(...inlineParser(line.trimStart()));
+      } else {
+        children.push({
+          "type": "paragraph",
+          "children": inlineParser(line.trimStart())
+        });
+        paragraphEnded = false;
+      }
     }
+  }
 
-    //変換開始
-    return precode(escaped);
+  return children;
+}
+
+/**
+ * 改行を統一する
+ * @param {string} md markdownの文字列
+ * @returns {string} 改行が統一された文字列
+ */
+function lineBreakUnifier(md) {
+  return md.replace(/\r\n|\r/g, "\n");
+}
+
+/**
+ * 構文木から参照定義と脚註を検索する
+ * @param {Object} tree 構文木
+ * @returns {Object} 参照定義と脚註のマップ
+ */
+function findReferenceAndFootnotes(tree) {
+  // 参照定義と脚註を検索する
+  const referenceMap = {};
+  const footnoteMap = {};
+  function traverse(node) {
+    if (node.type === "referenceDefinition") {
+      referenceMap[node.id] = node;
+    } else if (node.type === "footnoteDefinition") {
+      footnoteMap[node.id] = node;
+    }
+    if (node.children) {
+      node.children.forEach(traverse);
+    }
+  }
+  traverse(tree);
+  return { referenceMap, footnoteMap };
+}
+
+/**
+ * 構文木をHTMLに変換する
+ * @param {Object} node 構文木
+ * @param {Object} referenceMap 参照定義のマップ
+ * @param {Object} footnoteMap 脚註のマップ
+ * @returns {string} HTMLの文字列
+ */
+function treeToHTML(node, referenceMap = {}, footnoteMap = {}) {
+  let html = "";
+  if (node.type === "text") {
+    html += node.content;
+  } else if (node.type === "lineBreak") {
+    html += "<br>";
+  } else if (node.type === "em") {
+    html += `<em>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</em>`;
+  } else if (node.type === "strong") {
+    html += `<strong>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</strong>`;
+  } else if (node.type === "link") {
+    const titleAttr = node.title ? ` title="${node.title.replace(/"/g, "&quot;")}"` : "";
+    html += `<a href="${node.url.replace(/"/g, "&quot;")}"${titleAttr}>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</a>`;
+  } else if (node.type === "image") {
+    const titleAttr = node.title ? ` title="${node.title.replace(/"/g, "&quot;")}"` : "";
+    html += `<img src="${node.url.replace(/"/g, "&quot;")}" alt="${node.alt.replace(/"/g, "&quot;")}"${titleAttr}>`;
+  } else if (node.type === "code") {
+    html += `<code>${node.content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`;
+  } else if (node.type === "heading") {
+    html += `<h${node.level}>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</h${node.level}>`;
+  } else if (node.type === "paragraph") {
+    html += `<p>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</p>`;
+  } else if (node.type === "list") {
+    const tag = node.ordered ? "ol" : "ul";
+    html += `<${tag}>${node.items.map(item => `<li>${item.type === 'checkListItem' ? `<input type="checkbox" disabled ${item.checked ? 'checked' : ''}> ` : ''}${item.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</li>`).join("")}</${tag}>`;
+  } else if (node.type === "blockQuote") {
+    html += `<blockquote>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</blockquote>`;
+  } else if (node.type === "codeBlock") {
+    const classAttr = node.language ? ` class="language-${node.language.replace(/"/g, "&quot;")}"` : "";
+    html += `<pre><code${classAttr}>${node.content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`;
+  } else if (node.type === "math") {
+    html += `<span class="math">${node.content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`;
+  } else if (node.type === "mathBlock") {
+    html += `<div class="math-block">${node.content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
+  } else if (node.type === "deleted") {
+    html += `<del>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</del>`;
+  } else if (node.type === "subscript") {
+    html += `<sub>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</sub>`;
+  } else if (node.type === "superscript") {
+    html += `<sup>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</sup>`;
+  } else if (node.type === "highlight") {
+    html += `<mark>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</mark>`;
+  } else if (node.type === "table") {
+    html += `<table><thead><tr>${node.header.map((cell, i) => `<th style="text-align:${node.align[i]}">${cell.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</th>`).join("")}</tr></thead><tbody>${node.rows.map(row => `<tr>${row.map((cell, i) => `<td style="text-align:${node.align[i]}">${cell.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  } else if (node.type === "note") {
+    html += `<div class="note ${node.noteType}">${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</div>`;
+  } else if (node.type === "thematicBreak") {
+    html += `<hr>`;
+  } else if (node.type === "footnote") {
+    const footnoteContent = footnoteMap[node.id] ? footnoteMap[node.id].footnote : "";
+    html += `<sup class="footnote"><a href="#footnote-${node.id}">[${node.id}]</a></sup>`;
+  } else if (node.type === "referenceLink") {
+    const reference = Object.hasOwn(referenceMap, node.id) ? referenceMap[node.id] : null;
+    const url = reference !== null ? reference.url : "#";
+    const title = (reference !== null && reference.title ? ` title="${reference.title.replace(/"/g, "&quot;")}"` : "");
+    html += `<a href="${url.replace(/"/g, "&quot;")}"${title}>${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</a>`;
+  } else if (node.type === "root") {
+    html += node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("");
+  }
+
+  return html;
+}
+
+/**
+ * markdownの文字列をHTMLに変換する
+ * @param {string} md markdownの文字列
+ * @returns {string} HTMLの文字列
+ */
+function mdread(md) {
+  const tree = {
+    "type": "root",
+    "children": blockParser(lineBreakUnifier(md))
+  };
+
+  const { referenceMap, footnoteMap } = findReferenceAndFootnotes(tree);
+  let html = treeToHTML(tree, referenceMap, footnoteMap);
+
+  if (Object.keys(footnoteMap).length > 0) {
+    html += '<div class="footnotes">';
+    Object.keys(footnoteMap).forEach(id => {
+      html += `<div id="footnote-${id}" class="footnote-content">[${id}]: ${footnoteMap[id].footnote}</div>`;
+    });
+    html += '</div>';
+  }
+
+  return html;
 }
