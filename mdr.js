@@ -1,7 +1,7 @@
 /**
  * mdreader - Markdown to HTML converter
  * @author hoimohu
- * @version 3.0.0
+ * @version 3.0.1
  * @license MIT
  */
 
@@ -561,9 +561,8 @@ function blockParser(md) {
         "type": "mathBlock",
         "content": mathBlockBuffer.join("\n")
       });
-      i--;
     } else if (line.startsWith(":::note")) {
-      const noteType = line.slice(6).trim();
+      const noteType = line.slice(7).trim();
       const noteBuffer = [];
       i++;
       while (i < lines.length && !lines[i].startsWith(":::")) {
@@ -575,7 +574,6 @@ function blockParser(md) {
         "noteType": noteType,
         "children": blockParser(noteBuffer.join("\n"))
       });
-      i--;
     } else if (line.match(/^(---+|___+|\*\*\*+)$/)) {
       children.push({
         "type": "thematicBreak"
@@ -726,7 +724,7 @@ function treeToHTML(node, referenceMap = {}, footnoteMap = {}) {
   } else if (node.type === "table") {
     html += `<table><thead><tr>${node.header.map((cell, i) => `<th style="text-align:${node.align[i]}">${cell.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</th>`).join("")}</tr></thead><tbody>${node.rows.map(row => `<tr>${row.map((cell, i) => `<td style="text-align:${node.align[i]}">${cell.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   } else if (node.type === "note") {
-    html += `<div class="note ${node.noteType}">${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</div>`;
+    html += `<div class="note${(node.noteType !== '' ? ' ' + node.noteType : '')}">${node.children.map((child) => treeToHTML(child, referenceMap, footnoteMap)).join("")}</div>`;
   } else if (node.type === "thematicBreak") {
     html += `<hr>`;
   } else if (node.type === "footnote") {
